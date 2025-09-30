@@ -1,0 +1,122 @@
+const express = require('express');
+const router = express.Router();
+const { sendLoanInquiryEmails } = require('../utils/emailSender');
+
+// POST - Wysyłanie zapytania kredytowego
+router.post('/loan-inquiry', async (req, res) => {
+  try {
+    const {
+      name,
+      email,
+      phone,
+      propertyPrice,
+      ownContribution,
+      loanTerm,
+      monthlyPayment
+    } = req.body;
+
+    // Walidacja wymaganych pól
+    if (!name || !email || !propertyPrice) {
+      return res.status(400).json({
+        success: false,
+        error: 'Wymagane pola: name, email, propertyPrice'
+      });
+    }
+
+    // Walidacja emaila
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nieprawidłowy format emaila'
+      });
+    }
+
+    // Przygotowanie danych formularza
+    const formData = {
+      name: name.trim(),
+      email: email.trim(),
+      phone: phone ? phone.trim() : 'Nie podano',
+      propertyPrice: formatCurrency(propertyPrice),
+      ownContribution: ownContribution ? formatCurrency(ownContribution) : 'Nie podano',
+      loanTerm: loanTerm ? `${loanTerm} mies.` : 'Nie podano',
+      monthlyPayment: monthlyPayment ? formatCurrency(monthlyPayment) : 'Nie podano'
+    };
+
+    // Wysłanie maili
+    const result = await sendLoanInquiryEmails(formData);
+
+    if (result.success) {
+      res.status(200).json({
+        success: true,
+        message: 'Zapytanie kredytowe zostało wysłane pomyślnie',
+        data: {
+          name: formData.name,
+          email: formData.email,
+          timestamp: new Date().toISOString()
+        }
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: 'Błąd podczas wysyłania wiadomości email',
+        details: result.results
+      });
+    }
+
+  } catch (error) {
+    console.error('Błąd endpointu /loan-inquiry:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Wewnętrzny błąd serwera',
+      details: error.message
+    });
+  }
+});
+
+// Funkcja pomocnicza do formatowania waluty
+function formatCurrency(amount) {
+  if (!amount) return '0 PLN';
+  
+  const number = typeof amount === 'string' 
+    ? parseFloat(amount.replace(/[^\d.,]/g, '').replace(',', '.')) 
+    : Number(amount);
+  
+  if (isNaN(number)) return '0 PLN';
+  
+  return new Intl.NumberFormat('pl-PL', {
+    style: 'currency',
+    currency: 'PLN'
+  }).format(number);
+}
+
+// GET - Testowy endpoint do sprawdzenia konfiguracji email
+router.get('/test-email', async (req, res) => {
+  try {
+    const testData = {
+      name: 'Jan Kowalski',
+      email: process.env.ADMIN_EMAIL, // Wyślij test do siebie
+      phone: '+48 123 456 789',
+      propertyPrice: '450000 PLN',
+      ownContribution: '90000 PLN',
+      loanTerm: '360 mies.',
+      monthlyPayment: '1850 PLN'
+    };
+
+    const result = await sendLoanInquiryEmails(testData);
+
+    res.json({
+      success: result.success,
+      message: 'Testowy email został wysłany',
+      results: result.results
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+module.exports = router;
