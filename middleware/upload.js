@@ -24,7 +24,6 @@ const storage = multer.diskStorage({
 
 // Filtrowanie plików
 const fileFilter = (req, file, cb) => {
-  // Zezwól na obrazy, PDF i video
   if (
     file.mimetype.startsWith('image/') ||
     file.mimetype === 'application/pdf' ||
@@ -32,7 +31,7 @@ const fileFilter = (req, file, cb) => {
   ) {
     cb(null, true);
   } else {
-    cb(new Error('Nieobsługiwany typ pliku. Dozwolone są tylko obrazy, PDF i video.'), false);
+    cb(new Error('Nieobsługiwany typ pliku.'), false);
   }
 };
 
@@ -40,9 +39,9 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB max
-    files: 20 // max 20 plików
+    fileSize: 50 * 1024 * 1024,
+    files: 20
   }
 });
 
-module.exports = upload;    
+module.exports = upload;

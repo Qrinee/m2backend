@@ -6,16 +6,30 @@ const fs = require('fs');
 const path = require('path');
 
 // GET wszystkie nieruchomości
+// GET wszystkie nieruchomości z paginacją
 router.get('/', async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 9;
+    const skip = (page - 1) * limit;
+
     const properties = await Property.find({ isActive: true })
-      .sort({ createdAt: -1 });
-    res.json(properties);
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Property.countDocuments({ isActive: true });
+
+    res.json({
+      properties,
+      currentPage: page,
+      totalPages: Math.ceil(total / limit),
+      totalProperties: total
+    });
   } catch (error) {
     res.status(500).json({ error: 'Błąd podczas pobierania nieruchomości' });
   }
 });
-
 // GET pojedyncza nieruchomość
 router.get('/:id', async (req, res) => {
   try {
@@ -40,14 +54,15 @@ router.post('/', upload.array('files', 20), async (req, res) => {
     const parsedSzczegoly = typeof szczegoly === 'string' ? JSON.parse(szczegoly) : szczegoly;
 
     // Przygotowanie danych plików
-    const filesData = req.files ? req.files.map((file, index) => ({
-      filename: file.filename,
-      originalName: file.originalname,
-      path: file.path,
-      mimetype: file.mimetype,
-      size: file.size,
-      isCover: index === 0 // Pierwszy plik jako domyślny cover
-    })) : [];
+// W funkcji POST zmień przygotowanie danych plików:
+const filesData = req.files ? req.files.map((file, index) => ({
+  filename: file.filename,
+  originalName: file.originalname,
+  path: `uploads/${file.filename}`, // ZAPISUJ WZGLĘDNĄ ŚCIEŻKĘ
+  mimetype: file.mimetype,
+  size: file.size,
+  isCover: index === 0
+})) : [];
 
     // Utworzenie nowej nieruchomości
     const newProperty = new Property({

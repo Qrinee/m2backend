@@ -64,7 +64,7 @@ const propertySchema = new mongoose.Schema({
   // Metadane
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
-  isActive: { type: Boolean, default: true }
+  isActive: { type: Boolean, default: false }
 });
 
 // Aktualizacja updatedAt przed zapisem

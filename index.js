@@ -30,7 +30,9 @@ mongoose.connection.on('error', (err) => {
 
 // Routes
 app.use('/api/properties', require('./routes/properties'));
-app.use('/api/emails', require('./routes/emails')); 
+app.use('/api/emails', require('./routes/emails'));
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/users', require('./routes/users')); // DODAJ TĘ LINIĘ
 
 // Health check
 app.get('/api/health', (req, res) => {
