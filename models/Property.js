@@ -61,6 +61,13 @@ const propertySchema = new mongoose.Schema({
     wskaznik_energetyczny: { type: String }
   },
 
+  // Przypisanie do użytkownika
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+
   // Metadane
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
@@ -72,5 +79,9 @@ propertySchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
 });
+
+// Indeks dla lepszej wydajności zapytań
+propertySchema.index({ user: 1, createdAt: -1 });
+propertySchema.index({ isActive: 1 });
 
 module.exports = mongoose.model('Property', propertySchema);

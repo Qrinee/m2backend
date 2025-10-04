@@ -32,6 +32,14 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  position: {
+    type: String,
+    default: null
+  },
+  contactEmail: {
+    type: String,
+    default: null,
+  },
   phone: {
     type: String,
     default: null
@@ -51,6 +59,10 @@ const userSchema = new mongoose.Schema({
   emailVerified: {
     type: Boolean,
     default: false
+  },
+  bio: {
+    type: String,
+    default: null
   }
 }, {
   timestamps: true
@@ -93,12 +105,29 @@ userSchema.virtual('fullName').get(function() {
   return `${this.name} ${this.surname}`;
 });
 
+// Wirtualne pole dla liczby nieruchomości użytkownika
+userSchema.virtual('properties', {
+  ref: 'Property',
+  localField: '_id',
+  foreignField: 'user'
+});
+
 // Metoda do zwracania danych użytkownika bez wrażliwych informacji
 userSchema.methods.toJSON = function() {
   const user = this.toObject();
   delete user.password;
   delete user.__v;
   return user;
+};
+
+// Statyczna metoda do pobierania użytkownika z nieruchomościami
+userSchema.statics.getUserWithProperties = function(userId) {
+  return this.findById(userId)
+    .populate({
+      path: 'properties',
+      match: { isActive: true },
+      options: { sort: { createdAt: -1 } }
+    });
 };
 
 module.exports = mongoose.model('User', userSchema);

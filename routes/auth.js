@@ -1,58 +1,56 @@
 const express = require('express');
+const router = express.Router();
 const User = require('../models/User');
 const { auth } = require('../middleware/auth');
-const upload = require('../middleware/upload');
-const fs = require('fs');
-const path = require('path');
-const router = express.Router();
+const jwt = require('jsonwebtoken');
 
 // Rejestracja użytkownika
 router.post('/register', async (req, res) => {
   try {
     const { name, surname, email, password, phone } = req.body;
 
-    // Walidacja pól
+    // Walidacja wymaganych pól
     if (!name || !surname || !email || !password) {
       return res.status(400).json({
         success: false,
-        error: 'Wymagane pola: name, surname, email, password'
+        error: 'Wszystkie pola są wymagane'
       });
     }
 
     // Sprawdź czy użytkownik już istnieje
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(409).json({
+      return res.status(400).json({
         success: false,
         error: 'Użytkownik z tym adresem email już istnieje'
       });
     }
 
-    // Walidacja hasła
-    if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        error: 'Hasło musi mieć co najmniej 6 znaków'
-      });
-    }
-
     // Utwórz nowego użytkownika
     const user = new User({
-      name: name.trim(),
-      surname: surname.trim(),
-      email: email.toLowerCase().trim(),
-      password: password,
+      name,
+      surname,
+      email,
+      password,
       phone: phone || null
     });
 
     await user.save();
 
-    // Wygeneruj token
+    // Generuj token JWT
     const token = user.generateAuthToken();
+
+    // Ustaw token jako HTTP-only cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 dni
+    });
 
     res.status(201).json({
       success: true,
-      message: 'Użytkownik został pomyślnie zarejestrowany',
+      message: 'Rejestracja zakończona pomyślnie',
       data: {
         user: {
           id: user._id,
@@ -60,35 +58,17 @@ router.post('/register', async (req, res) => {
           surname: user.surname,
           email: user.email,
           phone: user.phone,
-          profilePicture: user.profilePicture,
           role: user.role,
-          fullName: user.fullName
-        },
-        token
+          profilePicture: user.profilePicture
+        }
       }
     });
 
   } catch (error) {
     console.error('Błąd rejestracji:', error);
-    
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
-        success: false,
-        error: errors.join(', ')
-      });
-    }
-    
-    if (error.code === 11000) {
-      return res.status(409).json({
-        success: false,
-        error: 'Użytkownik z tym adresem email już istnieje'
-      });
-    }
-    
-    res.status(500).json({
+    res.status(400).json({
       success: false,
-      error: 'Błąd serwera podczas rejestracji'
+      error: error.message
     });
   }
 });
@@ -98,6 +78,7 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // Walidacja
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -105,9 +86,8 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() })
-      .select('+password');
-
+    // Znajdź użytkownika i włącz pole password
+    const user = await User.findOne({ email }).select('+password');
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -115,13 +95,15 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    // Sprawdź czy konto jest aktywne
     if (!user.isActive) {
       return res.status(401).json({
         success: false,
-        error: 'Konto użytkownika jest nieaktywne'
+        error: 'Konto zostało dezaktywowane'
       });
     }
 
+    // Sprawdź hasło
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
       return res.status(401).json({
@@ -130,14 +112,24 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    // Aktualizuj ostatnie logowanie
     user.lastLogin = new Date();
     await user.save();
 
+    // Generuj token JWT
     const token = user.generateAuthToken();
+
+    // Ustaw token jako HTTP-only cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 dni
+    });
 
     res.json({
       success: true,
-      message: 'Logowanie pomyślne',
+      message: 'Logowanie zakończone pomyślnie',
       data: {
         user: {
           id: user._id,
@@ -145,12 +137,10 @@ router.post('/login', async (req, res) => {
           surname: user.surname,
           email: user.email,
           phone: user.phone,
-          profilePicture: user.profilePicture,
           role: user.role,
-          fullName: user.fullName,
+          profilePicture: user.profilePicture,
           lastLogin: user.lastLogin
-        },
-        token
+        }
       }
     });
 
@@ -163,165 +153,50 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Pobierz dane aktualnego użytkownika
+// Wylogowanie użytkownika
+router.post('/logout', (req, res) => {
+  try {
+    // Wyczyść cookie z tokenem
+    res.clearCookie('token', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict'
+    });
+
+    res.json({
+      success: true,
+      message: 'Wylogowano pomyślnie'
+    });
+
+  } catch (error) {
+    console.error('Błąd wylogowania:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Błąd podczas wylogowania'
+    });
+  }
+});
+
+// Pobierz aktualnego użytkownika
 router.get('/me', auth, async (req, res) => {
   try {
     res.json({
       success: true,
       data: {
-        user: {
-          id: req.user._id,
-          name: req.user.name,
-          surname: req.user.surname,
-          email: req.user.email,
-          phone: req.user.phone,
-          profilePicture: req.user.profilePicture,
-          role: req.user.role,
-          fullName: req.user.fullName,
-          lastLogin: req.user.lastLogin,
-          createdAt: req.user.createdAt
-        }
+        user: req.user
       }
     });
   } catch (error) {
     console.error('Błąd pobierania danych użytkownika:', error);
     res.status(500).json({
       success: false,
-      error: 'Błąd serwera podczas pobierania danych użytkownika'
+      error: 'Błąd pobierania danych użytkownika'
     });
   }
 });
 
-// Aktualizacja profilu użytkownika
-router.put('/profile', auth, upload.single('profilePicture'), async (req, res) => {
-  try {
-    const { name, surname, phone } = req.body;
-    const updateData = {};
-
-    if (name) updateData.name = name.trim();
-    if (surname) updateData.surname = surname.trim();
-    if (phone) updateData.phone = phone.trim();
-
-    // Obsługa zdjęcia profilowego
-    if (req.file) {
-      // Jeśli użytkownik ma już zdjęcie profilowe, usuń stare
-      if (req.user.profilePicture) {
-        const oldImagePath = path.join(__dirname, '..', req.user.profilePicture);
-        if (fs.existsSync(oldImagePath)) {
-          fs.unlinkSync(oldImagePath);
-        }
-      }
-      
-      updateData.profilePicture = `uploads/${req.file.filename}`;
-    }
-
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      updateData,
-      { new: true, runValidators: true }
-    );
-
-    res.json({
-      success: true,
-      message: 'Profil został zaktualizowany',
-      data: {
-        user: {
-          id: user._id,
-          name: user.name,
-          surname: user.surname,
-          email: user.email,
-          phone: user.phone,
-          profilePicture: user.profilePicture,
-          role: user.role,
-          fullName: user.fullName
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('Błąd aktualizacji profilu:', error);
-    
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
-        success: false,
-        error: errors.join(', ')
-      });
-    }
-    
-    res.status(500).json({
-      success: false,
-      error: 'Błąd serwera podczas aktualizacji profilu'
-    });
-  }
-});
-
-// Usunięcie zdjęcia profilowego
-router.delete('/profile/picture', auth, async (req, res) => {
-  try {
-    if (!req.user.profilePicture) {
-      return res.status(400).json({
-        success: false,
-        error: 'Użytkownik nie ma zdjęcia profilowego'
-      });
-    }
-
-    // Usuń plik z serwera
-    const imagePath = path.join(__dirname, '..', req.user.profilePicture);
-    if (fs.existsSync(imagePath)) {
-      fs.unlinkSync(imagePath);
-    }
-
-    // Zaktualizuj użytkownika
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      { profilePicture: null },
-      { new: true }
-    );
-
-    res.json({
-      success: true,
-      message: 'Zdjęcie profilowe zostało usunięte',
-      data: {
-        user: {
-          id: user._id,
-          name: user.name,
-          surname: user.surname,
-          email: user.email,
-          phone: user.phone,
-          profilePicture: user.profilePicture,
-          role: user.role,
-          fullName: user.fullName
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('Błąd usuwania zdjęcia profilowego:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Błąd serwera podczas usuwania zdjęcia profilowego'
-    });
-  }
-});
-
-// Wylogowanie
-router.post('/logout', auth, async (req, res) => {
-  try {
-    res.json({
-      success: true,
-      message: 'Wylogowano pomyślnie'
-    });
-  } catch (error) {
-    console.error('Błąd wylogowania:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Błąd serwera podczas wylogowania'
-    });
-  }
-});
-
-router.post('/reset-password-request', async (req, res) => {
+// Resetowanie hasła - żądanie
+router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -332,28 +207,61 @@ router.post('/reset-password-request', async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
-    
+    const user = await User.findOne({ email });
     if (!user) {
-      // Dla bezpieczeństwa nie zdradzaj czy email istnieje
+      // Dla bezpieczeństwa nie ujawniamy czy email istnieje
       return res.json({
         success: true,
-        message: 'Jeśli email istnieje w systemie, wysłaliśmy link resetujący'
+        message: 'Jeśli email istnieje w systemie, wysłaliśmy instrukcje resetowania hasła'
       });
     }
 
-    // TODO: Wygeneruj token resetujący i wyślij email
-    // Na razie zwracamy sukces dla symulacji
+    // TODO: Zaimplementuj wysyłkę emaila z tokenem resetowania
+    // Na razie zwracamy sukces dla UX
     res.json({
       success: true,
-      message: 'Jeśli email istnieje w systemie, wysłaliśmy link resetujący'
+      message: 'Jeśli email istnieje w systemie, wysłaliśmy instrukcje resetowania hasła'
     });
 
   } catch (error) {
     console.error('Błąd resetowania hasła:', error);
     res.status(500).json({
       success: false,
-      error: 'Błąd serwera podczas resetowania hasła'
+      error: 'Błąd podczas przetwarzania żądania resetowania hasła'
+    });
+  }
+});
+
+// Aktualizacja profilu użytkownika
+router.put('/profile', auth, async (req, res) => {
+  try {
+    const { name, surname, phone, profilePicture } = req.body;
+
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user._id,
+      {
+        name,
+        surname,
+        phone,
+        profilePicture,
+        updatedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    );
+
+    res.json({
+      success: true,
+      message: 'Profil zaktualizowany pomyślnie',
+      data: {
+        user: updatedUser
+      }
+    });
+
+  } catch (error) {
+    console.error('Błąd aktualizacji profilu:', error);
+    res.status(400).json({
+      success: false,
+      error: error.message
     });
   }
 });
@@ -366,19 +274,14 @@ router.put('/change-password', auth, async (req, res) => {
     if (!currentPassword || !newPassword) {
       return res.status(400).json({
         success: false,
-        error: 'Obecne hasło i nowe hasło są wymagane'
+        error: 'Obecne i nowe hasło są wymagane'
       });
     }
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({
-        success: false,
-        error: 'Nowe hasło musi mieć co najmniej 6 znaków'
-      });
-    }
-
+    // Pobierz użytkownika z hasłem
     const user = await User.findById(req.user._id).select('+password');
     
+    // Sprawdź obecne hasło
     const isCurrentPasswordValid = await user.comparePassword(currentPassword);
     if (!isCurrentPasswordValid) {
       return res.status(401).json({
@@ -387,19 +290,20 @@ router.put('/change-password', auth, async (req, res) => {
       });
     }
 
+    // Zmień hasło
     user.password = newPassword;
     await user.save();
 
     res.json({
       success: true,
-      message: 'Hasło zostało pomyślnie zmienione'
+      message: 'Hasło zostało zmienione pomyślnie'
     });
 
   } catch (error) {
     console.error('Błąd zmiany hasła:', error);
-    res.status(500).json({
+    res.status(400).json({
       success: false,
-      error: 'Błąd serwera podczas zmiany hasła'
+      error: error.message
     });
   }
 });
