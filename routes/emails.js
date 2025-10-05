@@ -1,6 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const { sendLoanInquiryEmails } = require('../utils/emailSender');
+const FormSubmission = require('../models/FormSubmission');
+
+// Funkcja pomocnicza do pobierania adresu IP
+const getClientIp = (req) => {
+  return req.ip || 
+         req.connection.remoteAddress || 
+         req.socket.remoteAddress ||
+         (req.connection.socket ? req.connection.socket.remoteAddress : null) ||
+         'unknown';
+};
 
 // POST - Wysyłanie zapytania kredytowego
 router.post('/loan-inquiry', async (req, res) => {
@@ -12,7 +22,8 @@ router.post('/loan-inquiry', async (req, res) => {
       propertyPrice,
       ownContribution,
       loanTerm,
-      monthlyPayment
+      monthlyPayment,
+      interestRate
     } = req.body;
 
     // Walidacja wymaganych pól
@@ -40,8 +51,28 @@ router.post('/loan-inquiry', async (req, res) => {
       propertyPrice: formatCurrency(propertyPrice),
       ownContribution: ownContribution ? formatCurrency(ownContribution) : 'Nie podano',
       loanTerm: loanTerm ? `${loanTerm} mies.` : 'Nie podano',
-      monthlyPayment: monthlyPayment ? formatCurrency(monthlyPayment) : 'Nie podano'
+      monthlyPayment: monthlyPayment ? formatCurrency(monthlyPayment) : 'Nie podano',
+      interestRate: interestRate || 'Nie podano'
     };
+
+    // Zapisz formularz w bazie danych
+    const formSubmission = new FormSubmission({
+      name: formData.name,
+      email: formData.email.toLowerCase(),
+      phone: phone ? phone.trim() : null,
+      formType: 'loan_inquiry',
+      loanInquiry: {
+        propertyPrice: formData.propertyPrice,
+        ownContribution: formData.ownContribution,
+        loanTerm: formData.loanTerm,
+        monthlyPayment: formData.monthlyPayment,
+        interestRate: formData.interestRate
+      },
+      ipAddress: getClientIp(req),
+      userAgent: req.get('User-Agent')
+    });
+
+    await formSubmission.save();
 
     // Wysłanie maili
     const result = await sendLoanInquiryEmails(formData);
@@ -53,10 +84,16 @@ router.post('/loan-inquiry', async (req, res) => {
         data: {
           name: formData.name,
           email: formData.email,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          submissionId: formSubmission._id
         }
       });
     } else {
+      // Oznacz jako błąd w bazie
+      formSubmission.status = 'closed';
+      formSubmission.internalNotes = `Błąd wysyłania email: ${JSON.stringify(result.results)}`;
+      await formSubmission.save();
+
       res.status(500).json({
         success: false,
         error: 'Błąd podczas wysyłania wiadomości email',
@@ -90,12 +127,99 @@ function formatCurrency(amount) {
   }).format(number);
 }
 
+// GET - Pobieranie formularzy (dla panelu admina)
+router.get('/submissions', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const formType = req.query.type; // property_inquiry lub loan_inquiry
+    const status = req.query.status;
+
+    const query = {};
+    if (formType) query.formType = formType;
+    if (status) query.status = status;
+
+    const result = await FormSubmission.getPaginated(query, page, limit);
+
+    res.json({
+      success: true,
+      ...result
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// GET - Pobieranie pojedynczego formularza
+router.get('/submissions/:id', async (req, res) => {
+  try {
+    const submission = await FormSubmission.findById(req.params.id)
+      .populate('propertyInquiry.propertyId');
+
+    if (!submission) {
+      return res.status(404).json({
+        success: false,
+        error: 'Formularz nie znaleziony'
+      });
+    }
+
+    res.json({
+      success: true,
+      submission
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// PUT - Aktualizacja statusu formularza
+router.put('/submissions/:id', async (req, res) => {
+  try {
+    const { status, internalNotes } = req.body;
+
+    const submission = await FormSubmission.findById(req.params.id);
+    if (!submission) {
+      return res.status(404).json({
+        success: false,
+        error: 'Formularz nie znaleziony'
+      });
+    }
+
+    if (status) submission.status = status;
+    if (internalNotes) {
+      submission.internalNotes += `\n${new Date().toISOString()}: ${internalNotes}`;
+    }
+
+    await submission.save();
+
+    res.json({
+      success: true,
+      message: 'Formularz zaktualizowany pomyślnie',
+      submission
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // GET - Testowy endpoint do sprawdzenia konfiguracji email
 router.get('/test-email', async (req, res) => {
   try {
     const testData = {
       name: 'Jan Kowalski',
-      email: process.env.ADMIN_EMAIL, // Wyślij test do siebie
+      email: process.env.ADMIN_EMAIL,
       phone: '+48 123 456 789',
       propertyPrice: '450000 PLN',
       ownContribution: '90000 PLN',
@@ -118,5 +242,31 @@ router.get('/test-email', async (req, res) => {
     });
   }
 });
+
+// DELETE - Usuwanie formularza
+router.delete('/submissions/:id', async (req, res) => {
+  try {
+    const submission = await FormSubmission.findByIdAndDelete(req.params.id);
+    
+    if (!submission) {
+      return res.status(404).json({
+        success: false,
+        error: 'Formularz nie znaleziony'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Formularz usunięty pomyślnie'
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 
 module.exports = router;

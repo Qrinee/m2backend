@@ -9,6 +9,9 @@ const blogSchema = new mongoose.Schema({
    title: {
     type: String,
   },
+  excerpt: {
+    type: String,
+  },
   date: {
      type: Date, 
      default: Date.now 

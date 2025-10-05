@@ -33,7 +33,7 @@ const createAdminEmailTemplate = (formData) => {
 <body>
   <div class="container">
     <div class="header">
-      <h1>📧 Nowe zapytanie kredytowe</h1>
+      <h1>📧 Nowe zapytanie</h1>
     </div>
     <div class="content">
       <div class="field">
@@ -99,11 +99,11 @@ const createUserEmailTemplate = (formData) => {
 <body>
   <div class="container">
     <div class="header">
-      <h1>🏠 Dziękujemy za zapytanie kredytowe</h1>
+      <h1>🏠 Dziękujemy za zapytanie</h1>
     </div>
     <div class="content">
       <div class="thank-you">
-        <strong>Dziękujemy ${formData.name} za złożenie zapytania kredytowego!</strong>
+        <strong>Dziękujemy ${formData.name} za złożenie zapytania!</strong>
       </div>
       <p>Otrzymaliśmy Twoje zgłoszenie i skontaktujemy się z Tobą w ciągu 24 godzin.</p>
       
@@ -172,13 +172,13 @@ const sendLoanInquiryEmails = async (formData) => {
     const results = [];
 
     // 1. Wyślij maila do admina
-    const adminSubject = `📋 Nowe zapytanie kredytowe - ${formData.name}`;
+    const adminSubject = `📋 Nowe zapytanie - ${formData.name}`;
     const adminHtml = createAdminEmailTemplate(formData);
     const adminResult = await sendEmail(process.env.ADMIN_EMAIL, adminSubject, adminHtml);
     results.push({ to: 'admin', ...adminResult });
 
     // 2. Wyślij maila potwierdzającego do użytkownika
-    const userSubject = '🏠 Dziękujemy za zapytanie kredytowe';
+    const userSubject = '🏠 Dziękujemy za zapytanie';
     const userHtml = createUserEmailTemplate(formData);
     const userResult = await sendEmail(formData.email, userSubject, userHtml);
     results.push({ to: 'user', ...userResult });

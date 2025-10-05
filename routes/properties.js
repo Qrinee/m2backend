@@ -317,6 +317,70 @@ router.get('/search/advanced', async (req, res) => {
   }
 });
 
+
+// GET wszystkie nieruchomości dla admina (bez filtrów aktywności)
+router.get('/admin/all', adminAuth, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = (page - 1) * limit;
+
+    const properties = await Property.find({})
+      .populate('user', 'name surname email phone profilePicture')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Property.countDocuments({});
+
+    res.json({
+      success: true,
+      properties,
+      currentPage: page,
+      totalPages: Math.ceil(total / limit),
+      totalProperties: total
+    });
+  } catch (error) {
+    console.error('Błąd podczas pobierania nieruchomości dla admina:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Błąd podczas pobierania nieruchomości' 
+    });
+  }
+});
+
+// PUT zmiana statusu aktywności przez admina
+router.put('/admin/:id/status', adminAuth, async (req, res) => {
+  try {
+    const { isActive } = req.body;
+
+    const property = await Property.findByIdAndUpdate(
+      req.params.id,
+      { isActive, updatedAt: new Date() },
+      { new: true }
+    ).populate('user', 'name surname email phone profilePicture');
+
+    if (!property) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Nieruchomość nie znaleziona' 
+      });
+    }
+
+    res.json({
+      success: true,
+      property,
+      message: `Nieruchomość ${isActive ? 'aktywowana' : 'deaktywowana'} pomyślnie`
+    });
+  } catch (error) {
+    console.error('Błąd podczas zmiany statusu nieruchomości:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Błąd podczas zmiany statusu nieruchomości' 
+    });
+  }
+});
+
 // GET popularne wyszukiwania
 router.get('/search/popular', async (req, res) => {
   try {

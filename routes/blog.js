@@ -60,9 +60,21 @@ router.get('/', optionalAuth, async (req, res) => {
 
     const total = await Blog.countDocuments(filters);
 
+    // Mapowanie danych do struktury oczekiwanej przez frontend
+    const mappedBlogs = blogs.map(blog => ({
+      _id: blog._id,
+      title: blog.title,
+      content: blog.text, // mapuj 'text' na 'content'
+      excerpt: blog.shortText, // mapuj 'shortText' na 'excerpt'
+      image: blog.imageSrc, // mapuj 'imageSrc' na 'image'
+      date: blog.date,
+      createdAt: blog.createdAt,
+      updatedAt: blog.updatedAt
+    }));
+
     res.json({
       success: true,
-      blogs,
+      data: mappedBlogs, // zmiana z 'blogs' na 'data'
       currentPage: page,
       totalPages: Math.ceil(total / limit),
       totalBlogs: total
@@ -88,9 +100,21 @@ router.get('/:id', optionalAuth, async (req, res) => {
       });
     }
 
+    // Mapowanie danych
+    const mappedBlog = {
+      _id: blog._id,
+      title: blog.title,
+      content: blog.text,
+      excerpt: blog.shortText,
+      image: blog.imageSrc,
+      date: blog.date,
+      createdAt: blog.createdAt,
+      updatedAt: blog.updatedAt
+    };
+
     res.json({
       success: true,
-      blog
+      data: mappedBlog // zmiana z 'blog' na 'data'
     });
   } catch (error) {
     console.error('Błąd podczas pobierania wpisu bloga:', error);
@@ -104,27 +128,36 @@ router.get('/:id', optionalAuth, async (req, res) => {
 // POST nowy wpis bloga (wymaga autoryzacji admina)
 router.post('/', adminAuth, upload.single('image'), async (req, res) => {
   try {
-    const { title, text, date } = req.body;
+    const { title, content, excerpt, date } = req.body; // zmiana nazw pól
 
-    // Przygotowanie danych
     const blogData = {
       title,
-      text,
+      text: content, // mapuj 'content' na 'text'
+      shortText: excerpt, // mapuj 'excerpt' na 'shortText'
       date: date || new Date()
     };
 
-    // Dodanie obrazka jeśli został przesłany
     if (req.file) {
-      blogData.imageSrc = `uploads/${req.file.filename}`;
+      blogData.imageSrc = `/uploads/${req.file.filename}`; // dodaj slash na początku
     }
 
-    // Utworzenie nowego wpisu bloga
     const newBlog = new Blog(blogData);
     const savedBlog = await newBlog.save();
 
+    // Mapowanie odpowiedzi
+    const responseBlog = {
+      _id: savedBlog._id,
+      title: savedBlog.title,
+      content: savedBlog.text,
+      excerpt: savedBlog.shortText,
+      image: savedBlog.imageSrc,
+      date: savedBlog.date,
+      createdAt: savedBlog.createdAt
+    };
+
     res.status(201).json({
       success: true,
-      blog: savedBlog,
+      data: responseBlog, // zmiana z 'blog' na 'data'
       message: 'Wpis bloga został dodany pomyślnie'
     });
   } catch (error) {
@@ -146,31 +179,18 @@ router.post('/', adminAuth, upload.single('image'), async (req, res) => {
 // PUT aktualizacja wpisu bloga (tylko admin)
 router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
   try {
-    const blog = await Blog.findById(req.params.id);
-    
-    if (!blog) {
-      return res.status(404).json({ 
-        success: false,
-        error: 'Wpis bloga nie znaleziony' 
-      });
-    }
-
-    const { title, text, date } = req.body;
+    const { title, content, excerpt, date } = req.body; // zmiana nazw pól
 
     const updateData = {
       title,
-      text,
+      text: content, // mapuj 'content' na 'text'
+      shortText: excerpt, // mapuj 'excerpt' na 'shortText'
       date,
       updatedAt: new Date()
     };
 
-    // Aktualizacja obrazka jeśli został przesłany nowy
     if (req.file) {
-      // Usuń stary obrazek jeśli istnieje
-      if (blog.imageSrc && fs.existsSync(blog.imageSrc)) {
-        fs.unlinkSync(blog.imageSrc);
-      }
-      updateData.imageSrc = `uploads/${req.file.filename}`;
+      updateData.imageSrc = `/uploads/${req.file.filename}`; // dodaj slash
     }
 
     const updatedBlog = await Blog.findByIdAndUpdate(
@@ -179,9 +199,20 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
       { new: true, runValidators: true }
     );
 
+    // Mapowanie odpowiedzi
+    const responseBlog = {
+      _id: updatedBlog._id,
+      title: updatedBlog.title,
+      content: updatedBlog.text,
+      excerpt: updatedBlog.shortText,
+      image: updatedBlog.imageSrc,
+      date: updatedBlog.date,
+      updatedAt: updatedBlog.updatedAt
+    };
+
     res.json({
       success: true,
-      blog: updatedBlog,
+      data: responseBlog, // zmiana z 'blog' na 'data'
       message: 'Wpis bloga został zaktualizowany pomyślnie'
     });
   } catch (error) {

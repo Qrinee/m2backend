@@ -36,6 +36,7 @@ mongoose.connection.on('error', (err) => {
 });
 
 // Routes
+app.use('/api/inquiry', require('./routes/inquiry'));
 app.use('/api/properties', require('./routes/properties'));
 app.use('/api/emails', require('./routes/emails'));
 app.use('/api/auth', require('./routes/auth'));
