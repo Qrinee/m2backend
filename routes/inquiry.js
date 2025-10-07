@@ -454,7 +454,7 @@ router.post('/employee', upload.single('cv'), async (req, res) => {
 });
 
 // POST - Wysyłanie zapytania kredytowego
-router.post('/loan-inquiry' async (req, res) => {
+router.post('/loan-inquiry',  async (req, res) => {
   try {
     const {
       name,
