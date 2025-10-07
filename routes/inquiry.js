@@ -204,4 +204,246 @@ router.post('/', async (req, res) => {
 
 
 
+router.post('/contact', async (req, res) => {
+  try {
+    const { name, email, phone, message } = req.body;
+
+    // Walidacja wymaganych pól
+    if (!name || !email || !message) {
+      return res.status(400).json({
+        success: false,
+        error: 'Wymagane pola: name, email, message'
+      });
+    }
+
+    // Walidacja emaila
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nieprawidłowy format emaila'
+      });
+    }
+
+    // Zapisz formularz w bazie danych
+    const formSubmission = new FormSubmission({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phone: phone ? phone.trim() : null,
+      formType: 'contact_inquiry',
+      propertyInquiry: {
+        message: message.trim()
+      },
+      ipAddress: getClientIp(req),
+      userAgent: req.get('User-Agent')
+    });
+
+    await formSubmission.save();
+
+    // Szablon emaila dla formularza kontaktowego
+    const contactEmailTemplate = (formData) => {
+      return `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #2c3e50; color: white; padding: 20px; text-align: center; }
+    .content { background: #f9f9f9; padding: 20px; }
+    .field { margin-bottom: 15px; }
+    .label { font-weight: bold; color: #2c3e50; }
+    .value { color: #34495e; }
+    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; font-size: 12px; color: #7f8c8d; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Nowa wiadomość kontaktowa</h1>
+    </div>
+    <div class="content">
+      <h3>Dane kontaktowe:</h3>
+      <div class="field">
+        <span class="label">Imię i nazwisko:</span>
+        <span class="value">${formData.name}</span>
+      </div>
+      <div class="field">
+        <span class="label">Email:</span>
+        <span class="value">${formData.email}</span>
+      </div>
+      <div class="field">
+        <span class="label">Telefon:</span>
+        <span class="value">${formData.phone || 'Nie podano'}</span>
+      </div>
+      <div class="field">
+        <span class="label">Wiadomość:</span>
+        <span class="value">${formData.message}</span>
+      </div>
+      <div class="field">
+        <span class="label">Data zgłoszenia:</span>
+        <span class="value">${new Date().toLocaleString('pl-PL')}</span>
+      </div>
+    </div>
+    <div class="footer">
+      <p>Wiadomość wygenerowana automatycznie z formularza kontaktowego</p>
+    </div>
+  </div>
+</body>
+</html>
+      `;
+    };
+
+    // Wyślij email do administratora
+    await sendEmail(
+      process.env.CONTACT_EMAIL || process.env.ADMIN_EMAIL,
+      'Nowa wiadomość kontaktowa',
+      contactEmailTemplate({ name, email, phone, message })
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Wiadomość została wysłana pomyślnie',
+      data: {
+        name: formSubmission.name,
+        email: formSubmission.email,
+        timestamp: new Date().toISOString(),
+        submissionId: formSubmission._id
+      }
+    });
+
+  } catch (error) {
+    console.error('Błąd endpointu /contact:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Wewnętrzny błąd serwera',
+      details: error.message
+    });
+  }
+});
+
+// NOWY ENDPOINT - Zgłoszenie nieruchomości do sprzedaży
+router.post('/property-submission', async (req, res) => {
+  try {
+    const { name, email, phone, message } = req.body;
+
+    // Walidacja wymaganych pól
+    if (!name || !email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Wymagane pola: name, email'
+      });
+    }
+
+    // Walidacja emaila
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nieprawidłowy format emaila'
+      });
+    }
+
+    // Zapisz formularz w bazie danych
+    const formSubmission = new FormSubmission({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phone: phone ? phone.trim() : null,
+      formType: 'property_submission',
+      propertyInquiry: {
+        message: message ? message.trim() : 'Brak wiadomości'
+      },
+      ipAddress: getClientIp(req),
+      userAgent: req.get('User-Agent')
+    });
+
+    await formSubmission.save();
+
+    // Szablon emaila dla zgłoszenia nieruchomości
+    const propertySubmissionTemplate = (formData) => {
+      return `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #8e44ad; color: white; padding: 20px; text-align: center; }
+    .content { background: #f9f9f9; padding: 20px; }
+    .field { margin-bottom: 15px; }
+    .label { font-weight: bold; color: #2c3e50; }
+    .value { color: #34495e; }
+    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; font-size: 12px; color: #7f8c8d; }
+    .important { background: #e8f4fd; padding: 15px; border-radius: 5px; margin: 15px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Nowe zgłoszenie nieruchomości do sprzedaży</h1>
+    </div>
+    <div class="content">
+      <div class="important">
+        <h3>Klient chce sprzedać nieruchomość!</h3>
+      </div>
+      
+      <h3>Dane kontaktowe klienta:</h3>
+      <div class="field">
+        <span class="label">Imię i nazwisko:</span>
+        <span class="value">${formData.name}</span>
+      </div>
+      <div class="field">
+        <span class="label">Email:</span>
+        <span class="value">${formData.email}</span>
+      </div>
+      <div class="field">
+        <span class="label">Telefon:</span>
+        <span class="value">${formData.phone || 'Nie podano'}</span>
+      </div>
+      <div class="field">
+        <span class="label">Wiadomość:</span>
+        <span class="value">${formData.message || 'Brak wiadomości'}</span>
+      </div>
+      <div class="field">
+        <span class="label">Data zgłoszenia:</span>
+        <span class="value">${new Date().toLocaleString('pl-PL')}</span>
+      </div>
+    </div>
+    <div class="footer">
+      <p>Wiadomość wygenerowana automatycznie z formularza zgłoszeń nieruchomości</p>
+    </div>
+  </div>
+</body>
+</html>
+      `;
+    };
+
+    // Wyślij email do administratora
+    await sendEmail(
+      process.env.CONTACT_EMAIL || process.env.ADMIN_EMAIL,
+      'Nowe zgłoszenie nieruchomości do sprzedaży',
+      propertySubmissionTemplate({ name, email, phone, message })
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Zgłoszenie nieruchomości zostało wysłane pomyślnie',
+      data: {
+        name: formSubmission.name,
+        email: formSubmission.email,
+        timestamp: new Date().toISOString(),
+        submissionId: formSubmission._id
+      }
+    });
+
+  } catch (error) {
+    console.error('Błąd endpointu /property-submission:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Wewnętrzny błąd serwera',
+      details: error.message
+    });
+  }
+});
+
 module.exports = router;
