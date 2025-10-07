@@ -553,6 +553,7 @@ router.post('/loan-inquiry',  async (req, res) => {
 });
 
 // GET - Pobieranie formularzy (dla panelu admina)
+// GET - Pobieranie formularzy (dla panelu admina)
 router.get('/submissions', adminAuth, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -564,11 +565,22 @@ router.get('/submissions', adminAuth, async (req, res) => {
     if (formType) query.formType = formType;
     if (status) query.status = status;
 
-    const result = await FormSubmission.getPaginated(query, page, limit);
+    const skip = (page - 1) * limit;
+    
+    const [submissions, total] = await Promise.all([
+      FormSubmission.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      FormSubmission.countDocuments(query)
+    ]);
 
     res.json({
       success: true,
-      ...result
+      submissions,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      totalSubmissions: total
     });
 
   } catch (error) {
@@ -578,7 +590,6 @@ router.get('/submissions', adminAuth, async (req, res) => {
     });
   }
 });
-
 // GET - Pobieranie pojedynczego formularza
 router.get('/submissions/:id', adminAuth, async (req, res) => {
   try {

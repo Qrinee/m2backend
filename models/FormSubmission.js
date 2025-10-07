@@ -105,4 +105,24 @@ formSubmissionSchema.index({ email: 1, createdAt: -1 });
 formSubmissionSchema.index({ formType: 1, status: 1 });
 formSubmissionSchema.index({ createdAt: -1 });
 
+// Metoda statyczna do pobierania formularzy z paginacją - DODANA Z POWROTEM
+formSubmissionSchema.statics.getPaginated = async function(query = {}, page = 1, limit = 10) {
+  const skip = (page - 1) * limit;
+  
+  const [submissions, total] = await Promise.all([
+    this.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    this.countDocuments(query)
+  ]);
+  
+  return {
+    submissions,
+    totalPages: Math.ceil(total / limit),
+    currentPage: page,
+    totalSubmissions: total
+  };
+};
+
 module.exports = mongoose.model('FormSubmission', formSubmissionSchema);
