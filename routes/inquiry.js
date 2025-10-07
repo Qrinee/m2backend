@@ -204,15 +204,24 @@ router.post('/', async (req, res) => {
 
 
 
+// POST - Ogólny formularz kontaktowy z GDPR
 router.post('/contact', async (req, res) => {
   try {
-    const { name, email, phone, message } = req.body;
+    const { name, email, phone, message, gdpr } = req.body;
 
     // Walidacja wymaganych pól
     if (!name || !email || !message) {
       return res.status(400).json({
         success: false,
         error: 'Wymagane pola: name, email, message'
+      });
+    }
+
+    // Walidacja GDPR
+    if (!gdpr) {
+      return res.status(400).json({
+        success: false,
+        error: 'Wymagana zgoda GDPR'
       });
     }
 
@@ -240,7 +249,7 @@ router.post('/contact', async (req, res) => {
 
     await formSubmission.save();
 
-    // Szablon emaila dla formularza kontaktowego
+    // Szablon emaila
     const contactEmailTemplate = (formData) => {
       return `
 <!DOCTYPE html>
@@ -252,9 +261,7 @@ router.post('/contact', async (req, res) => {
     .header { background: #2c3e50; color: white; padding: 20px; text-align: center; }
     .content { background: #f9f9f9; padding: 20px; }
     .field { margin-bottom: 15px; }
-    .label { font-weight: bold; color: #2c3e50; }
-    .value { color: #34495e; }
-    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; font-size: 12px; color: #7f8c8d; }
+    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; }
   </style>
 </head>
 <body>
@@ -263,42 +270,25 @@ router.post('/contact', async (req, res) => {
       <h1>Nowa wiadomość kontaktowa</h1>
     </div>
     <div class="content">
-      <h3>Dane kontaktowe:</h3>
-      <div class="field">
-        <span class="label">Imię i nazwisko:</span>
-        <span class="value">${formData.name}</span>
-      </div>
-      <div class="field">
-        <span class="label">Email:</span>
-        <span class="value">${formData.email}</span>
-      </div>
-      <div class="field">
-        <span class="label">Telefon:</span>
-        <span class="value">${formData.phone || 'Nie podano'}</span>
-      </div>
-      <div class="field">
-        <span class="label">Wiadomość:</span>
-        <span class="value">${formData.message}</span>
-      </div>
-      <div class="field">
-        <span class="label">Data zgłoszenia:</span>
-        <span class="value">${new Date().toLocaleString('pl-PL')}</span>
-      </div>
+      <div class="field"><strong>Imię i nazwisko:</strong> ${formData.name}</div>
+      <div class="field"><strong>Email:</strong> ${formData.email}</div>
+      <div class="field"><strong>Telefon:</strong> ${formData.phone || 'Nie podano'}</div>
+      <div class="field"><strong>Wiadomość:</strong> ${formData.message}</div>
+      <div class="field"><strong>GDPR zaakceptowane:</strong> ${formData.gdpr ? 'Tak' : 'Nie'}</div>
     </div>
     <div class="footer">
-      <p>Wiadomość wygenerowana automatycznie z formularza kontaktowego</p>
+      <p>Wiadomość z formularza kontaktowego</p>
     </div>
   </div>
 </body>
-</html>
-      `;
+</html>`;
     };
 
     // Wyślij email do administratora
     await sendEmail(
       process.env.CONTACT_EMAIL || process.env.ADMIN_EMAIL,
       'Nowa wiadomość kontaktowa',
-      contactEmailTemplate({ name, email, phone, message })
+      contactEmailTemplate({ name, email, phone, message, gdpr })
     );
 
     res.status(200).json({
