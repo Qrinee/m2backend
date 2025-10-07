@@ -12,6 +12,7 @@ const getClientIp = (req) => {
          'unknown';
 };
 
+
 // POST - Wysyłanie zapytania kredytowego
 router.post('/loan-inquiry', async (req, res) => {
   try {
@@ -267,6 +268,65 @@ router.delete('/submissions/:id', async (req, res) => {
     });
   }
 });
+// POST - Zgłoszenie nieruchomości do sprzedaży
+router.post('/property-submission', async (req, res) => {
+  try {
+    const { name, email, phone, message } = req.body;
 
+    // Walidacja wymaganych pól
+    if (!name || !email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Wymagane pola: name, email'
+      });
+    }
+
+    // Walidacja emaila
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nieprawidłowy format emaila'
+      });
+    }
+
+    // Zapisz formularz w bazie danych
+    const formSubmission = new FormSubmission({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phone: phone ? phone.trim() : null,
+      formType: 'property_submission',
+      propertyInquiry: {
+        message: message ? message.trim() : 'Brak wiadomości'
+      },
+      ipAddress: getClientIp(req),
+      userAgent: req.get('User-Agent')
+    });
+
+    await formSubmission.save();
+
+    // Tutaj możesz dodać wysyłanie emaila powiadomienia
+    // await sendPropertySubmissionNotification({ name, email, phone, message });
+
+    res.status(200).json({
+      success: true,
+      message: 'Zgłoszenie nieruchomości zostało wysłane pomyślnie',
+      data: {
+        name: formSubmission.name,
+        email: formSubmission.email,
+        timestamp: new Date().toISOString(),
+        submissionId: formSubmission._id
+      }
+    });
+
+  } catch (error) {
+    console.error('Błąd endpointu /property-submission:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Wewnętrzny błąd serwera',
+      details: error.message
+    });
+  }
+});
 
 module.exports = router;
