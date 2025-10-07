@@ -446,4 +446,163 @@ router.post('/property-submission', async (req, res) => {
   }
 });
 
+
+// POST - Formularz partnerski
+router.post('/partner', async (req, res) => {
+  try {
+    const { name, email, phone, message } = req.body;
+
+    // Walidacja
+    if (!name || !email || !message) {
+      return res.status(400).json({
+        success: false,
+        error: 'Wymagane pola: name, email, message'
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nieprawidłowy format emaila'
+      });
+    }
+
+    // Zapisz w bazie
+    const formSubmission = new FormSubmission({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phone: phone ? phone.trim() : null,
+      formType: 'partner_inquiry',
+      propertyInquiry: {
+        message: message.trim()
+      },
+      ipAddress: getClientIp(req),
+      userAgent: req.get('User-Agent')
+    });
+
+    await formSubmission.save();
+
+    // Wyślij email
+    const partnerEmailTemplate = (formData) => {
+      return `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #8e44ad; color: white; padding: 20px; text-align: center; }
+    .content { background: #f9f9f9; padding: 20px; }
+    .field { margin-bottom: 15px; }
+    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Nowa propozycja współpracy partnerskiej</h1>
+    </div>
+    <div class="content">
+      <div class="field"><strong>Nazwa:</strong> ${formData.name}</div>
+      <div class="field"><strong>Email:</strong> ${formData.email}</div>
+      <div class="field"><strong>Telefon:</strong> ${formData.phone || 'Nie podano'}</div>
+      <div class="field"><strong>Wiadomość:</strong> ${formData.message}</div>
+    </div>
+    <div class="footer">
+      <p>Wiadomość z formularza partnerskiego</p>
+    </div>
+  </div>
+</body>
+</html>`;
+    };
+
+    await sendEmail(
+      process.env.CONTACT_EMAIL || process.env.ADMIN_EMAIL,
+      'Nowa propozycja współpracy partnerskiej',
+      partnerEmailTemplate({ name, email, phone, message })
+    );
+
+    res.json({
+      success: true,
+      message: 'Propozycja współpracy została wysłana',
+      submissionId: formSubmission._id
+    });
+
+  } catch (error) {
+    console.error('Błąd formularza partnerskiego:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Wewnętrzny błąd serwera'
+    });
+  }
+});
+
+// POST - Formularz rekrutacyjny (z obsługą plików)
+const multer = require('multer');
+const upload = multer({ 
+  dest: 'uploads/cv/',
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
+    cb(null, allowedTypes.includes(file.mimetype));
+  }
+});
+
+router.post('/employee', upload.single('cv'), async (req, res) => {
+  try {
+    const { name, email, phone, message } = req.body;
+
+    if (!name || !email || !message || !req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'Wymagane pola: name, email, message, CV'
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nieprawidłowy format emaila'
+      });
+    }
+
+    const formSubmission = new FormSubmission({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phone: phone ? phone.trim() : null,
+      formType: 'employee_inquiry',
+      propertyInquiry: {
+        message: message.trim(),
+        cvFile: req.file.filename
+      },
+      ipAddress: getClientIp(req),
+      userAgent: req.get('User-Agent')
+    });
+
+    await formSubmission.save();
+
+    // Tutaj możesz dodać wysyłanie emaila z załącznikiem
+    // await sendEmployeeApplicationEmail({ name, email, phone, message, cvPath: req.file.path });
+
+    res.json({
+      success: true,
+      message: 'Aplikacja została wysłana',
+      submissionId: formSubmission._id
+    });
+
+  } catch (error) {
+    console.error('Błąd formularza rekrutacyjnego:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Wewnętrzny błąd serwera'
+    });
+  }
+});
+
 module.exports = router;
