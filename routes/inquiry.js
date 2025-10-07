@@ -1,8 +1,37 @@
-const { sendEmail } = require("../utils/emailSender");
 const express = require('express');
 const router = express.Router();
-const Property = require('../models/Property');
+const multer = require('multer');
+const { sendLoanInquiryEmails, sendEmail } = require('../utils/emailSender');
 const FormSubmission = require('../models/FormSubmission');
+const Property = require('../models/Property');
+const { adminAuth } = require('../middleware/auth');
+
+// Konfiguracja multer dla plików CV
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/cv/')
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'cv-' + uniqueSuffix + '-' + file.originalname);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf' ||
+        file.mimetype === 'application/msword' ||
+        file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      cb(null, true);
+    } else {
+      cb(new Error('Nieprawidłowy format pliku. Akceptowane formaty: PDF, DOC, DOCX.'), false);
+    }
+  }
+});
 
 // Funkcja pomocnicza do pobierania adresu IP
 const getClientIp = (req) => {
@@ -13,8 +42,24 @@ const getClientIp = (req) => {
          'unknown';
 };
 
-// Szablon maila do właściciela
-const createOwnerEmailTemplate = (formData, property) => {
+// Funkcja pomocnicza do formatowania waluty
+function formatCurrency(amount) {
+  if (!amount) return '0 PLN';
+  
+  const number = typeof amount === 'string' 
+    ? parseFloat(amount.replace(/[^\d.,]/g, '').replace(',', '.')) 
+    : Number(amount);
+  
+  if (isNaN(number)) return '0 PLN';
+  
+  return new Intl.NumberFormat('pl-PL', {
+    style: 'currency',
+    currency: 'PLN'
+  }).format(number);
+}
+
+// Szablon emaila dla formularza kontaktowego
+const createContactEmailTemplate = (formData) => {
   return `
 <!DOCTYPE html>
 <html>
@@ -25,57 +70,66 @@ const createOwnerEmailTemplate = (formData, property) => {
     .header { background: #2c3e50; color: white; padding: 20px; text-align: center; }
     .content { background: #f9f9f9; padding: 20px; }
     .field { margin-bottom: 15px; }
-    .label { font-weight: bold; color: #2c3e50; }
-    .value { color: #34495e; }
-    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; font-size: 12px; color: #7f8c8d; }
-    .property-info { background: #e8f4fd; padding: 15px; border-radius: 5px; margin: 15px 0; }
+    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h1>Nowe zapytanie o nieruchomość</h1>
+      <h1>Nowa wiadomość kontaktowa</h1>
     </div>
     <div class="content">
-      <div class="property-info">
-        <h3>Nieruchomość: ${property.nazwa}</h3>
-        <p>Cena: ${property.cena}</p>
-        <p>Lokalizacja: ${property.lokalizacja?.miasto || ''}, ${property.lokalizacja?.wojewodztwo || ''}</p>
-      </div>
-      
-      <h3>Dane kontaktowe klienta:</h3>
-      <div class="field">
-        <span class="label">Imię i nazwisko:</span>
-        <span class="value">${formData.name}</span>
-      </div>
-      <div class="field">
-        <span class="label">Email:</span>
-        <span class="value">${formData.email}</span>
-      </div>
-      <div class="field">
-        <span class="label">Telefon:</span>
-        <span class="value">${formData.phone || 'Nie podano'}</span>
-      </div>
-      <div class="field">
-        <span class="label">Wiadomość:</span>
-        <span class="value">${formData.msg || 'Brak wiadomości'}</span>
-      </div>
-      <div class="field">
-        <span class="label">Data zgłoszenia:</span>
-        <span class="value">${new Date().toLocaleString('pl-PL')}</span>
-      </div>
+      <div class="field"><strong>Imię i nazwisko:</strong> ${formData.name}</div>
+      <div class="field"><strong>Email:</strong> ${formData.email}</div>
+      <div class="field"><strong>Telefon:</strong> ${formData.phone || 'Nie podano'}</div>
+      <div class="field"><strong>Wiadomość:</strong> ${formData.message}</div>
+      <div class="field"><strong>Data:</strong> ${new Date().toLocaleString('pl-PL')}</div>
     </div>
     <div class="footer">
-      <p>Wiadomość wygenerowana automatycznie z systemu nieruchomości</p>
+      <p>Wiadomość z formularza kontaktowego</p>
     </div>
   </div>
 </body>
-</html>
-  `;
+</html>`;
 };
 
-// Szablon maila potwierdzającego dla użytkownika
-const createConfirmationEmailTemplate = (formData, property) => {
+// Szablon emaila dla zgłoszenia nieruchomości
+const createPropertySubmissionTemplate = (formData) => {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #8e44ad; color: white; padding: 20px; text-align: center; }
+    .content { background: #f9f9f9; padding: 20px; }
+    .field { margin-bottom: 15px; }
+    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Nowe zgłoszenie nieruchomości</h1>
+    </div>
+    <div class="content">
+      <div class="field"><strong>Imię i nazwisko:</strong> ${formData.name}</div>
+      <div class="field"><strong>Email:</strong> ${formData.email}</div>
+      <div class="field"><strong>Telefon:</strong> ${formData.phone || 'Nie podano'}</div>
+      <div class="field"><strong>Wiadomość:</strong> ${formData.message || 'Brak wiadomości'}</div>
+      <div class="field"><strong>Data:</strong> ${new Date().toLocaleString('pl-PL')}</div>
+    </div>
+    <div class="footer">
+      <p>Wiadomość z formularza zgłoszenia nieruchomości</p>
+    </div>
+  </div>
+</body>
+</html>`;
+};
+
+// Szablon emaila dla formularza partnerskiego
+const createPartnerEmailTemplate = (formData) => {
   return `
 <!DOCTYPE html>
 <html>
@@ -85,126 +139,67 @@ const createConfirmationEmailTemplate = (formData, property) => {
     .container { max-width: 600px; margin: 0 auto; padding: 20px; }
     .header { background: #27ae60; color: white; padding: 20px; text-align: center; }
     .content { background: #f9f9f9; padding: 20px; }
-    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; font-size: 12px; color: #7f8c8d; }
-    .thank-you { text-align: center; margin: 20px 0; font-size: 18px; color: #27ae60; }
-    .property-info { background: #e8f4fd; padding: 15px; border-radius: 5px; margin: 15px 0; }
+    .field { margin-bottom: 15px; }
+    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h1>Dziękujemy za zapytanie</h1>
+      <h1>Nowa propozycja współpracy partnerskiej</h1>
     </div>
     <div class="content">
-      <div class="thank-you">
-        <strong>Dziękujemy ${formData.name} za złożenie zapytania!</strong>
-      </div>
-      <p>Otrzymaliśmy Twoje zgłoszenie i skontaktujemy się z Tobą w ciągu 24 godzin.</p>
-      
-      <div class="property-info">
-        <h3>Twoje zapytanie dotyczy:</h3>
-        <p><strong>${property.nazwa}</strong></p>
-        <p><strong>Cena:</strong> ${property.cena}</p>
-        <p><strong>Lokalizacja:</strong> ${property.lokalizacja?.miasto || ''}, ${property.lokalizacja?.wojewodztwo || ''}</p>
-      </div>
-      
-      <h3>Podsumowanie Twojego zapytania:</h3>
-      <p><strong>Email:</strong> ${formData.email}</p>
-      <p><strong>Telefon:</strong> ${formData.phone || 'Nie podano'}</p>
-      <p><strong>Wiadomość:</strong> ${formData.msg || 'Brak wiadomości'}</p>
-      
-      <p style="margin-top: 20px;">
-        <strong>Dane kontaktowe biura:</strong><br>
-        Email: ${process.env.CONTACT_EMAIL || 'kontakt@biuronieruchomosci.pl'}<br>
-        Telefon: ${process.env.CONTACT_PHONE || '+48 123 456 789'}
-      </p>
+      <div class="field"><strong>Nazwa:</strong> ${formData.name}</div>
+      <div class="field"><strong>Email:</strong> ${formData.email}</div>
+      <div class="field"><strong>Telefon:</strong> ${formData.phone || 'Nie podano'}</div>
+      <div class="field"><strong>Wiadomość:</strong> ${formData.message}</div>
+      <div class="field"><strong>Data:</strong> ${new Date().toLocaleString('pl-PL')}</div>
     </div>
     <div class="footer">
-      <p>Wiadomość wygenerowana automatycznie. Prosimy nie odpowiadać na tego maila.</p>
+      <p>Wiadomość z formularza partnerskiego</p>
     </div>
   </div>
 </body>
-</html>
-  `;
+</html>`;
 };
 
-// Endpoint do wysyłania zapytań
-router.post('/', async (req, res) => {
-  try {
-    const { name, email, phone, msg, propertyId } = req.body;
+// Szablon emaila dla formularza rekrutacyjnego
+const createEmployeeEmailTemplate = (formData) => {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #e67e22; color: white; padding: 20px; text-align: center; }
+    .content { background: #f9f9f9; padding: 20px; }
+    .field { margin-bottom: 15px; }
+    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Nowa aplikacja rekrutacyjna</h1>
+    </div>
+    <div class="content">
+      <div class="field"><strong>Imię i nazwisko:</strong> ${formData.name}</div>
+      <div class="field"><strong>Email:</strong> ${formData.email}</div>
+      <div class="field"><strong>Telefon:</strong> ${formData.phone || 'Nie podano'}</div>
+      <div class="field"><strong>Wiadomość:</strong> ${formData.message}</div>
+      <div class="field"><strong>Załączone CV:</strong> ${formData.cvFile ? 'Tak' : 'Nie'}</div>
+      <div class="field"><strong>Data:</strong> ${new Date().toLocaleString('pl-PL')}</div>
+    </div>
+    <div class="footer">
+      <p>Wiadomość z formularza rekrutacyjnego</p>
+    </div>
+  </div>
+</body>
+</html>`;
+};
 
-    // Walidacja danych
-    if (!name || !email || !propertyId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Brak wymaganych pól: name, email, propertyId'
-      });
-    }
-
-    // Znajdź nieruchomość
-    const property = await Property.findById(propertyId).populate('user');
-    if (!property) {
-      return res.status(404).json({
-        success: false,
-        error: 'Nie znaleziono nieruchomości'
-      });
-    }
-
-    // Zapisz formularz w bazie danych
-    const formSubmission = new FormSubmission({
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      phone: phone ? phone.trim() : null,
-      formType: 'property_inquiry',
-      propertyInquiry: {
-        propertyId: property._id,
-        propertyName: property.nazwa,
-        propertyPrice: property.cena,
-        propertyLocation: `${property.lokalizacja?.miasto || ''}, ${property.lokalizacja?.wojewodztwo || ''}`,
-        message: msg || null
-      },
-      ipAddress: getClientIp(req),
-      userAgent: req.get('User-Agent')
-    });
-
-    await formSubmission.save();
-
-    // Email do właściciela/agenta
-    const ownerEmail = property.user?.email || process.env.CONTACT_EMAIL || process.env.ADMIN_EMAIL;
-    if (ownerEmail) {
-      await sendEmail(
-        ownerEmail,
-        `Nowe zapytanie - ${property.nazwa}`,
-        createOwnerEmailTemplate(req.body, property)
-      );
-    }
-
-    // Email potwierdzający do użytkownika
-    await sendEmail(
-      email,
-      'Dziękujemy za zapytanie',
-      createConfirmationEmailTemplate(req.body, property)
-    );
-
-    res.json({
-      success: true,
-      message: 'Wiadomość została wysłana pomyślnie',
-      submissionId: formSubmission._id
-    });
-
-  } catch (error) {
-    console.error('Błąd podczas wysyłania zapytania:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Wystąpił błąd podczas wysyłania wiadomości'
-    });
-  }
-});
-
-
-
-
-// POST - Ogólny formularz kontaktowy z GDPR
+// POST - Ogólny formularz kontaktowy
 router.post('/contact', async (req, res) => {
   try {
     const { name, email, phone, message, gdpr } = req.body;
@@ -240,8 +235,9 @@ router.post('/contact', async (req, res) => {
       email: email.toLowerCase().trim(),
       phone: phone ? phone.trim() : null,
       formType: 'contact_inquiry',
-      propertyInquiry: {
-        message: message.trim()
+      contactInquiry: {
+        message: message.trim(),
+        gdprAccepted: gdpr
       },
       ipAddress: getClientIp(req),
       userAgent: req.get('User-Agent')
@@ -249,46 +245,11 @@ router.post('/contact', async (req, res) => {
 
     await formSubmission.save();
 
-    // Szablon emaila
-    const contactEmailTemplate = (formData) => {
-      return `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: #2c3e50; color: white; padding: 20px; text-align: center; }
-    .content { background: #f9f9f9; padding: 20px; }
-    .field { margin-bottom: 15px; }
-    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Nowa wiadomość kontaktowa</h1>
-    </div>
-    <div class="content">
-      <div class="field"><strong>Imię i nazwisko:</strong> ${formData.name}</div>
-      <div class="field"><strong>Email:</strong> ${formData.email}</div>
-      <div class="field"><strong>Telefon:</strong> ${formData.phone || 'Nie podano'}</div>
-      <div class="field"><strong>Wiadomość:</strong> ${formData.message}</div>
-      <div class="field"><strong>GDPR zaakceptowane:</strong> ${formData.gdpr ? 'Tak' : 'Nie'}</div>
-    </div>
-    <div class="footer">
-      <p>Wiadomość z formularza kontaktowego</p>
-    </div>
-  </div>
-</body>
-</html>`;
-    };
-
-    // Wyślij email do administratora
+    // Wyślij email
     await sendEmail(
       process.env.CONTACT_EMAIL || process.env.ADMIN_EMAIL,
       'Nowa wiadomość kontaktowa',
-      contactEmailTemplate({ name, email, phone, message, gdpr })
+      createContactEmailTemplate({ name, email, phone, message, gdpr })
     );
 
     res.status(200).json({
@@ -312,7 +273,7 @@ router.post('/contact', async (req, res) => {
   }
 });
 
-// NOWY ENDPOINT - Zgłoszenie nieruchomości do sprzedaży
+// POST - Zgłoszenie nieruchomości do sprzedaży
 router.post('/property-submission', async (req, res) => {
   try {
     const { name, email, phone, message } = req.body;
@@ -340,7 +301,7 @@ router.post('/property-submission', async (req, res) => {
       email: email.toLowerCase().trim(),
       phone: phone ? phone.trim() : null,
       formType: 'property_submission',
-      propertyInquiry: {
+      propertySubmission: {
         message: message ? message.trim() : 'Brak wiadomości'
       },
       ipAddress: getClientIp(req),
@@ -349,70 +310,11 @@ router.post('/property-submission', async (req, res) => {
 
     await formSubmission.save();
 
-    // Szablon emaila dla zgłoszenia nieruchomości
-    const propertySubmissionTemplate = (formData) => {
-      return `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: #8e44ad; color: white; padding: 20px; text-align: center; }
-    .content { background: #f9f9f9; padding: 20px; }
-    .field { margin-bottom: 15px; }
-    .label { font-weight: bold; color: #2c3e50; }
-    .value { color: #34495e; }
-    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; font-size: 12px; color: #7f8c8d; }
-    .important { background: #e8f4fd; padding: 15px; border-radius: 5px; margin: 15px 0; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Nowe zgłoszenie nieruchomości do sprzedaży</h1>
-    </div>
-    <div class="content">
-      <div class="important">
-        <h3>Klient chce sprzedać nieruchomość!</h3>
-      </div>
-      
-      <h3>Dane kontaktowe klienta:</h3>
-      <div class="field">
-        <span class="label">Imię i nazwisko:</span>
-        <span class="value">${formData.name}</span>
-      </div>
-      <div class="field">
-        <span class="label">Email:</span>
-        <span class="value">${formData.email}</span>
-      </div>
-      <div class="field">
-        <span class="label">Telefon:</span>
-        <span class="value">${formData.phone || 'Nie podano'}</span>
-      </div>
-      <div class="field">
-        <span class="label">Wiadomość:</span>
-        <span class="value">${formData.message || 'Brak wiadomości'}</span>
-      </div>
-      <div class="field">
-        <span class="label">Data zgłoszenia:</span>
-        <span class="value">${new Date().toLocaleString('pl-PL')}</span>
-      </div>
-    </div>
-    <div class="footer">
-      <p>Wiadomość wygenerowana automatycznie z formularza zgłoszeń nieruchomości</p>
-    </div>
-  </div>
-</body>
-</html>
-      `;
-    };
-
-    // Wyślij email do administratora
+    // Wyślij email
     await sendEmail(
       process.env.CONTACT_EMAIL || process.env.ADMIN_EMAIL,
       'Nowe zgłoszenie nieruchomości do sprzedaży',
-      propertySubmissionTemplate({ name, email, phone, message })
+      createPropertySubmissionTemplate({ name, email, phone, message })
     );
 
     res.status(200).json({
@@ -435,7 +337,6 @@ router.post('/property-submission', async (req, res) => {
     });
   }
 });
-
 
 // POST - Formularz partnerski
 router.post('/partner', async (req, res) => {
@@ -464,7 +365,7 @@ router.post('/partner', async (req, res) => {
       email: email.toLowerCase().trim(),
       phone: phone ? phone.trim() : null,
       formType: 'partner_inquiry',
-      propertyInquiry: {
+      partnerInquiry: {
         message: message.trim()
       },
       ipAddress: getClientIp(req),
@@ -474,43 +375,10 @@ router.post('/partner', async (req, res) => {
     await formSubmission.save();
 
     // Wyślij email
-    const partnerEmailTemplate = (formData) => {
-      return `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: #8e44ad; color: white; padding: 20px; text-align: center; }
-    .content { background: #f9f9f9; padding: 20px; }
-    .field { margin-bottom: 15px; }
-    .footer { margin-top: 20px; padding: 20px; background: #ecf0f1; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Nowa propozycja współpracy partnerskiej</h1>
-    </div>
-    <div class="content">
-      <div class="field"><strong>Nazwa:</strong> ${formData.name}</div>
-      <div class="field"><strong>Email:</strong> ${formData.email}</div>
-      <div class="field"><strong>Telefon:</strong> ${formData.phone || 'Nie podano'}</div>
-      <div class="field"><strong>Wiadomość:</strong> ${formData.message}</div>
-    </div>
-    <div class="footer">
-      <p>Wiadomość z formularza partnerskiego</p>
-    </div>
-  </div>
-</body>
-</html>`;
-    };
-
     await sendEmail(
       process.env.CONTACT_EMAIL || process.env.ADMIN_EMAIL,
       'Nowa propozycja współpracy partnerskiej',
-      partnerEmailTemplate({ name, email, phone, message })
+      createPartnerEmailTemplate({ name, email, phone, message })
     );
 
     res.json({
@@ -529,20 +397,6 @@ router.post('/partner', async (req, res) => {
 });
 
 // POST - Formularz rekrutacyjny (z obsługą plików)
-const multer = require('multer');
-const upload = multer({ 
-  dest: 'uploads/cv/',
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = [
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    ];
-    cb(null, allowedTypes.includes(file.mimetype));
-  }
-});
-
 router.post('/employee', upload.single('cv'), async (req, res) => {
   try {
     const { name, email, phone, message } = req.body;
@@ -567,7 +421,7 @@ router.post('/employee', upload.single('cv'), async (req, res) => {
       email: email.toLowerCase().trim(),
       phone: phone ? phone.trim() : null,
       formType: 'employee_inquiry',
-      propertyInquiry: {
+      employeeInquiry: {
         message: message.trim(),
         cvFile: req.file.filename
       },
@@ -577,8 +431,12 @@ router.post('/employee', upload.single('cv'), async (req, res) => {
 
     await formSubmission.save();
 
-    // Tutaj możesz dodać wysyłanie emaila z załącznikiem
-    // await sendEmployeeApplicationEmail({ name, email, phone, message, cvPath: req.file.path });
+    // Wyślij email
+    await sendEmail(
+      process.env.CONTACT_EMAIL || process.env.ADMIN_EMAIL,
+      'Nowa aplikacja rekrutacyjna',
+      createEmployeeEmailTemplate({ name, email, phone, message, cvFile: req.file.filename })
+    );
 
     res.json({
       success: true,
@@ -591,6 +449,216 @@ router.post('/employee', upload.single('cv'), async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Wewnętrzny błąd serwera'
+    });
+  }
+});
+
+// POST - Wysyłanie zapytania kredytowego
+router.post('/loan-inquiry' async (req, res) => {
+  try {
+    const {
+      name,
+      email,
+      phone,
+      propertyPrice,
+      ownContribution,
+      loanTerm,
+      monthlyPayment,
+      interestRate
+    } = req.body;
+
+    // Walidacja wymaganych pól
+    if (!name || !email || !propertyPrice) {
+      return res.status(400).json({
+        success: false,
+        error: 'Wymagane pola: name, email, propertyPrice'
+      });
+    }
+
+    // Walidacja emaila
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nieprawidłowy format emaila'
+      });
+    }
+
+    // Przygotowanie danych formularza
+    const formData = {
+      name: name.trim(),
+      email: email.trim(),
+      phone: phone ? phone.trim() : 'Nie podano',
+      propertyPrice: formatCurrency(propertyPrice),
+      ownContribution: ownContribution ? formatCurrency(ownContribution) : 'Nie podano',
+      loanTerm: loanTerm ? `${loanTerm} mies.` : 'Nie podano',
+      monthlyPayment: monthlyPayment ? formatCurrency(monthlyPayment) : 'Nie podano',
+      interestRate: interestRate || 'Nie podano'
+    };
+
+    // Zapisz formularz w bazie danych
+    const formSubmission = new FormSubmission({
+      name: formData.name,
+      email: formData.email.toLowerCase(),
+      phone: phone ? phone.trim() : null,
+      formType: 'loan_inquiry',
+      loanInquiry: {
+        propertyPrice: formData.propertyPrice,
+        ownContribution: formData.ownContribution,
+        loanTerm: formData.loanTerm,
+        monthlyPayment: formData.monthlyPayment,
+        interestRate: formData.interestRate
+      },
+      ipAddress: getClientIp(req),
+      userAgent: req.get('User-Agent')
+    });
+
+    await formSubmission.save();
+
+    // Wysłanie maili
+    const result = await sendLoanInquiryEmails(formData);
+
+    if (result.success) {
+      res.status(200).json({
+        success: true,
+        message: 'Zapytanie kredytowe zostało wysłane pomyślnie',
+        data: {
+          name: formData.name,
+          email: formData.email,
+          timestamp: new Date().toISOString(),
+          submissionId: formSubmission._id
+        }
+      });
+    } else {
+      // Oznacz jako błąd w bazie
+      formSubmission.status = 'closed';
+      formSubmission.internalNotes = `Błąd wysyłania email: ${JSON.stringify(result.results)}`;
+      await formSubmission.save();
+
+      res.status(500).json({
+        success: false,
+        error: 'Błąd podczas wysyłania wiadomości email',
+        details: result.results
+      });
+    }
+
+  } catch (error) {
+    console.error('Błąd endpointu /loan-inquiry:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Wewnętrzny błąd serwera',
+      details: error.message
+    });
+  }
+});
+
+// GET - Pobieranie formularzy (dla panelu admina)
+router.get('/submissions', adminAuth, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const formType = req.query.type;
+    const status = req.query.status;
+
+    const query = {};
+    if (formType) query.formType = formType;
+    if (status) query.status = status;
+
+    const result = await FormSubmission.getPaginated(query, page, limit);
+
+    res.json({
+      success: true,
+      ...result
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// GET - Pobieranie pojedynczego formularza
+router.get('/submissions/:id', adminAuth, async (req, res) => {
+  try {
+    const submission = await FormSubmission.findById(req.params.id);
+
+    if (!submission) {
+      return res.status(404).json({
+        success: false,
+        error: 'Formularz nie znaleziony'
+      });
+    }
+
+    res.json({
+      success: true,
+      submission
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// PUT - Aktualizacja statusu formularza
+router.put('/submissions/:id', adminAuth, async (req, res) => {
+  try {
+    const { status, internalNotes } = req.body;
+
+    const submission = await FormSubmission.findById(req.params.id);
+    if (!submission) {
+      return res.status(404).json({
+        success: false,
+        error: 'Formularz nie znaleziony'
+      });
+    }
+
+    if (status) submission.status = status;
+    if (internalNotes) {
+      submission.internalNotes += `\n${new Date().toISOString()}: ${internalNotes}`;
+    }
+
+    await submission.save();
+
+    res.json({
+      success: true,
+      message: 'Formularz zaktualizowany pomyślnie',
+      submission
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// DELETE - Usuwanie formularza
+router.delete('/submissions/:id', adminAuth, async (req, res) => {
+  try {
+    const submission = await FormSubmission.findByIdAndDelete(req.params.id);
+    
+    if (!submission) {
+      return res.status(404).json({
+        success: false,
+        error: 'Formularz nie znaleziony'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Formularz usunięty pomyślnie'
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
