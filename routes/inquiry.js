@@ -201,4 +201,66 @@ router.post('/', async (req, res) => {
   }
 });
 
+
+// POST - Ogólne zapytanie kontaktowe
+router.post('/contact', async (req, res) => {
+  try {
+    const { name, email, phone, message } = req.body;
+
+    // Walidacja wymaganych pól
+    if (!name || !email || !message) {
+      return res.status(400).json({
+        success: false,
+        error: 'Wymagane pola: name, email, message'
+      });
+    }
+
+    // Walidacja emaila
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nieprawidłowy format emaila'
+      });
+    }
+
+    // Zapisz formularz w bazie danych
+    const formSubmission = new FormSubmission({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phone: phone ? phone.trim() : null,
+      formType: 'contact_inquiry',
+      contactInquiry: {
+        message: message.trim()
+      },
+      ipAddress: getClientIp(req),
+      userAgent: req.get('User-Agent')
+    });
+
+    await formSubmission.save();
+
+    // Tutaj możesz dodać wysyłanie emaila powiadomienia
+    // await sendContactNotification(formData);
+
+    res.status(200).json({
+      success: true,
+      message: 'Wiadomość została wysłana pomyślnie',
+      data: {
+        name: formSubmission.name,
+        email: formSubmission.email,
+        timestamp: new Date().toISOString(),
+        submissionId: formSubmission._id
+      }
+    });
+
+  } catch (error) {
+    console.error('Błąd endpointu /contact:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Wewnętrzny błąd serwera',
+      details: error.message
+    });
+  }
+});
+
 module.exports = router;
