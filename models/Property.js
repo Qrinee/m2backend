@@ -15,6 +15,7 @@ const propertySchema = new mongoose.Schema({
   nazwa: { type: String, required: true },
   opis: { type: String },
   cena: { type: String },
+  cenaNum: { type: Number, default: 0 }, // DODANE - dla sortowania i filtrowania
   poCenie: { type: String },
   przedCena: { type: String },
   podatek: { type: String },
@@ -74,8 +75,15 @@ const propertySchema = new mongoose.Schema({
   isActive: { type: Boolean, default: false }
 });
 
-// Aktualizacja updatedAt przed zapisem
+// Aktualizacja cenaNum przed zapisem
 propertySchema.pre('save', function(next) {
+  // Konwertuj cenę tekstową na liczbę
+  if (this.cena && !isNaN(parseFloat(this.cena))) {
+    this.cenaNum = parseFloat(this.cena);
+  } else {
+    this.cenaNum = 0;
+  }
+  
   this.updatedAt = Date.now();
   next();
 });
@@ -83,5 +91,7 @@ propertySchema.pre('save', function(next) {
 // Indeks dla lepszej wydajności zapytań
 propertySchema.index({ user: 1, createdAt: -1 });
 propertySchema.index({ isActive: 1 });
+propertySchema.index({ cenaNum: 1 }); // DODANE - dla sortowania cen
+propertySchema.index({ 'lokalizacja.wojewodztwo': 1 }); // DODANE - dla filtrowania
 
-module.exports = mongoose.model('Property', propertySchema);
+module.exports = mongoose.model('Property', propertySchema);  
