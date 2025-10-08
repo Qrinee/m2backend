@@ -30,19 +30,19 @@ const userSchema = new mongoose.Schema({
   },
   profilePicture: {
     type: String,
-    default: null
+    default: ""
   },
   position: {
     type: String,
-    default: null
+    default: ""
   },
   contactEmail: {
     type: String,
-    default: null,
+    default: "",
   },
   phone: {
     type: String,
-    default: null
+    default: ""
   },
   role: {
     type: String,
@@ -62,7 +62,7 @@ const userSchema = new mongoose.Schema({
   },
   bio: {
     type: String,
-    default: null
+    default: ""
   }
 }, {
   timestamps: true
