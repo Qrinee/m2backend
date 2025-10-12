@@ -12,23 +12,28 @@ router.get('/', optionalAuth, async (req, res) => {
     const limit = parseInt(req.query.limit) || 9;
     const skip = (page - 1) * limit;
     
-    // Filtry
-    const filters = { isActive: true };
+    // Filtry - UŻYWAJ TYLKO STATUSU, NIE isActive
+    const filters = { status: 'aktywne' };
     
     // Jeśli użytkownik jest zalogowany i chce zobaczyć swoje nieruchomości
     if (req.query.my === 'true' && req.user) {
       filters.user = req.user._id;
-      delete filters.isActive; // Pokazuj wszystkie nieruchomości użytkownika
+      delete filters.status; // Pokazuj wszystkie nieruchomości użytkownika
     }
     
+    // Reszta filtrów pozostaje bez zmian
     // Filtrowanie po kategorii
     if (req.query.kategoria) {
       filters.kategoria = req.query.kategoria;
     }
     
-    // Filtrowanie po statusie (sprzedaż/wynajem)
-    if (req.query.status) {
-      filters.status = req.query.status;
+    // Filtrowanie po typie ogłoszenia (sprzedaż/wynajem)
+    if (req.query.typ) {
+      if (req.query.typ === 'sprzedaz') {
+        filters.status = 'na_sprzedaz';
+      } else if (req.query.typ === 'wynajem') {
+        filters.status = 'do_wynajecia';
+      }
     }
 
     // Filtrowanie po województwie
@@ -43,43 +48,57 @@ router.get('/', optionalAuth, async (req, res) => {
 
     // Wyszukiwanie po nazwie ogłoszenia
     if (req.query.search) {
-      filters.nazwa = { $regex: req.query.search, $options: 'i' };
+      filters.$or = [
+        { nazwa: { $regex: req.query.search, $options: 'i' } },
+        { tytul: { $regex: req.query.search, $options: 'i' } }
+      ];
     }
 
-    // Filtrowanie po typie ogłoszenia (sprzedaż/wynajem)
-    if (req.query.typ) {
-      if (req.query.typ === 'sprzedaz') {
-        filters.status = 'na_sprzedaz';
-      } else if (req.query.typ === 'wynajem') {
-        filters.status = 'do_wynajecia';
-      }
-    }
-
-    // Filtrowanie po cenie - zakres
+    // Filtrowanie po cenie - zakres (obsługa obu struktur)
     if (req.query.cenaMin || req.query.cenaMax) {
-      filters.cenaNum = {};
+      const priceFilter = {};
       if (req.query.cenaMin) {
-        filters.cenaNum.$gte = parseFloat(req.query.cenaMin);
+        priceFilter.$gte = parseFloat(req.query.cenaMin);
       }
       if (req.query.cenaMax) {
-        filters.cenaNum.$lte = parseFloat(req.query.cenaMax);
+        priceFilter.$lte = parseFloat(req.query.cenaMax);
       }
+      
+      filters.$or = [
+        { cenaNum: priceFilter },
+        { 'cena.calkowita': priceFilter }
+      ];
     }
 
-    // Filtrowanie po powierzchni
+    // Filtrowanie po powierzchni (obsługa obu struktur)
     if (req.query.powierzchniaMin || req.query.powierzchniaMax) {
-      filters['szczegoly.rozmiar_m2'] = {};
+      const areaFilter = {};
       if (req.query.powierzchniaMin) {
-        filters['szczegoly.rozmiar_m2'].$gte = parseFloat(req.query.powierzchniaMin);
+        areaFilter.$gte = parseFloat(req.query.powierzchniaMin);
       }
       if (req.query.powierzchniaMax) {
-        filters['szczegoly.rozmiar_m2'].$lte = parseFloat(req.query.powierzchniaMax);
+        areaFilter.$lte = parseFloat(req.query.powierzchniaMax);
       }
+      
+      filters.$and = filters.$and || [];
+      filters.$and.push({
+        $or: [
+          { 'szczegoly.rozmiar_m2': areaFilter },
+          { 'powierzchnia.calkowita': areaFilter }
+        ]
+      });
     }
 
-    // Filtrowanie po liczbie pokoi
+    // Filtrowanie po liczbie pokoi (obsługa obu struktur)
     if (req.query.pokoje) {
-      filters['szczegoly.pokoje'] = parseInt(req.query.pokoje);
+      const rooms = parseInt(req.query.pokoje);
+      filters.$and = filters.$and || [];
+      filters.$and.push({
+        $or: [
+          { 'szczegoly.pokoje': rooms },
+          { 'pomieszczenia.pokoje': rooms }
+        ]
+      });
     }
 
     // Sortowanie
@@ -87,10 +106,10 @@ router.get('/', optionalAuth, async (req, res) => {
     if (req.query.sort) {
       switch (req.query.sort) {
         case 'cena-asc':
-          sortOptions = { cenaNum: 1 };
+          sortOptions = { cenaNum: 1, 'cena.calkowita': 1 };
           break;
         case 'cena-desc':
-          sortOptions = { cenaNum: -1 };
+          sortOptions = { cenaNum: -1, 'cena.calkowita': -1 };
           break;
         case 'data-asc':
           sortOptions = { createdAt: 1 };
@@ -99,10 +118,10 @@ router.get('/', optionalAuth, async (req, res) => {
           sortOptions = { createdAt: -1 };
           break;
         case 'powierzchnia-asc':
-          sortOptions = { 'szczegoly.rozmiar_m2': 1 };
+          sortOptions = { 'szczegoly.rozmiar_m2': 1, 'powierzchnia.calkowita': 1 };
           break;
         case 'powierzchnia-desc':
-          sortOptions = { 'szczegoly.rozmiar_m2': -1 };
+          sortOptions = { 'szczegoly.rozmiar_m2': -1, 'powierzchnia.calkowita': -1 };
           break;
         default:
           sortOptions = { createdAt: -1 };
@@ -142,15 +161,15 @@ router.get('/filters/options', async (req, res) => {
       miasta,
       statusy
     ] = await Promise.all([
-      Property.distinct('kategoria', { isActive: true }),
-      Property.distinct('lokalizacja.wojewodztwo', { isActive: true }),
-      Property.distinct('lokalizacja.miasto', { isActive: true }),
-      Property.distinct('status', { isActive: true })
+      Property.distinct('kategoria', { status: 'aktywne' }),
+      Property.distinct('lokalizacja.wojewodztwo', { status: 'aktywne' }),
+      Property.distinct('lokalizacja.miasto', { status: 'aktywne' }),
+      Property.distinct('status', { status: 'aktywne' })
     ]);
 
     // Pobierz min i max cenę
     const priceStats = await Property.aggregate([
-      { $match: { isActive: true, cenaNum: { $gt: 0 } } },
+      { $match: { status: 'aktywne', cenaNum: { $gt: 0 } } },
       {
         $group: {
           _id: null,
@@ -162,7 +181,7 @@ router.get('/filters/options', async (req, res) => {
 
     // Pobierz min i max powierzchnię
     const areaStats = await Property.aggregate([
-      { $match: { isActive: true, 'szczegoly.rozmiar_m2': { $ne: null, $ne: '' } } },
+      { $match: { status: 'aktywne', 'szczegoly.rozmiar_m2': { $ne: null, $ne: '' } } },
       {
         $addFields: {
           rozmiarNum: { $toDouble: '$szczegoly.rozmiar_m2' }
@@ -184,7 +203,7 @@ router.get('/filters/options', async (req, res) => {
 
     // Pobierz dostępne liczby pokoi
     const pokojeOptions = await Property.aggregate([
-      { $match: { isActive: true, 'szczegoly.pokoje': { $ne: null, $ne: '' } } },
+      { $match: { status: 'aktywne', 'szczegoly.pokoje': { $ne: null, $ne: '' } } },
       {
         $group: {
           _id: '$szczegoly.pokoje'
@@ -243,7 +262,7 @@ router.get('/search/advanced', async (req, res) => {
       sort
     } = req.query;
 
-    const filters = { isActive: true };
+    const filters = { status: 'aktywne' };
 
     // Wyszukiwanie tekstowe w nazwie i opisie
     if (search) {
@@ -374,11 +393,11 @@ router.get('/admin/all', adminAuth, async (req, res) => {
 // PUT zmiana statusu aktywności przez admina
 router.put('/admin/:id/status', adminAuth, async (req, res) => {
   try {
-    const { isActive } = req.body;
+    const { status } = req.body;
 
     const property = await Property.findByIdAndUpdate(
       req.params.id,
-      { isActive, updatedAt: new Date() },
+      { status, updatedAt: new Date() },
       { new: true }
     ).populate('user', 'name surname email phone profilePicture');
 
@@ -392,7 +411,7 @@ router.put('/admin/:id/status', adminAuth, async (req, res) => {
     res.json({
       success: true,
       property,
-      message: `Nieruchomość ${isActive ? 'aktywowana' : 'deaktywowana'} pomyślnie`
+      message: `Nieruchomość ${status == 'aktywne' ? 'aktywowana' : 'deaktywowana'} pomyślnie`
     });
   } catch (error) {
     console.error('Błąd podczas zmiany statusu nieruchomości:', error);
@@ -436,22 +455,9 @@ router.get('/:id', optionalAuth, async (req, res) => {
     const property = await Property.findById(req.params.id)
       .populate('user', 'name surname contactEmail position phone profilePicture role'); // DODAJ contactEmail
 
-    if (!property) {
-      return res.status(404).json({ success: false, error: 'Nieruchomość nie znaleziona' });
-    }
 
-    // Sprawdź czy użytkownik jest właścicielem lub adminem
-    let isOwner = false;
-    if (req.user) {
-      isOwner = req.user._id.equals(property.user._id) || req.user.role === 'admin';
-    }
 
-    // Jeśli nie jest właścicielem/adminem i nieruchomość nie jest aktywna, zwróć błąd
-    if (!isOwner && !property.isActive) {
-      return res.status(404).json({ success: false, error: 'Nieruchomość nie znaleziona' });
-    }
-
-    res.json({ success: true, property, isOwner });
+    res.json({ success: true, property });
   } catch (error) {
     console.error('Błąd podczas pobierania nieruchomości:', error);
     res.status(500).json({ success: false, error: 'Błąd podczas pobierania nieruchomości' });
@@ -461,35 +467,69 @@ router.get('/:id', optionalAuth, async (req, res) => {
 // POST nowa nieruchomość z plikami (wymaga autoryzacji)
 router.post('/', auth, upload.array('files', 20), async (req, res) => {
   try {
-    const { opis, lokalizacja, szczegoly } = req.body;
+    let propertyData = req.body;
 
-    if (!opis || !lokalizacja) {
-      return res.status(400).json({
-        success: false,
-        error: 'Brak wymaganych danych: opis i lokalizacja'
-      });
-    }
+    // Parsowanie stringów JSON na obiekty
+    const fieldsToParse = [
+      'cena', 'rodzajOferty', 'lokalizacja', 'powierzchnia', 
+      'pomieszczenia', 'budynek', 'pietro', 'udogodnienia', 
+      'informacjePrawne', 'media', 'wyposazenie', 'multimedia', 
+      'promocje', 'daty'
+    ];
 
-    // Parsowanie danych z formularza
-    let parsedOpis, parsedLokalizacja, parsedSzczegoly;
-    
-    try {
-      parsedOpis = typeof opis === 'string' ? JSON.parse(opis) : opis;
-      parsedLokalizacja = typeof lokalizacja === 'string' ? JSON.parse(lokalizacja) : lokalizacja;
-      parsedSzczegoly = typeof szczegoly === 'string' ? JSON.parse(szczegoly) : (szczegoly || {});
-    } catch (parseError) {
-      console.error('Błąd parsowania JSON:', parseError);
-      return res.status(400).json({
-        success: false,
-        error: 'Nieprawidłowy format danych JSON'
-      });
-    }
+    fieldsToParse.forEach(field => {
+      if (propertyData[field] && typeof propertyData[field] === 'string') {
+        try {
+          propertyData[field] = JSON.parse(propertyData[field]);
+        } catch (error) {
+          console.warn(`Błąd parsowania pola ${field}:`, error);
+        }
+      }
+    });
+
+    console.log('Po parsowaniu:', propertyData);
 
     // Walidacja wymaganych pól
-    if (!parsedOpis.nazwa || !parsedLokalizacja.adres) {
+    if (!propertyData.tytul || !propertyData.cena || !propertyData.opis) {
       return res.status(400).json({
         success: false,
-        error: 'Wymagane pola: nazwa i adres'
+        error: 'Brak wymaganych pól: tytuł, cena, opis'
+      });
+    }
+
+    // Dodatkowa walidacja konkretnych pól
+    if (!propertyData.cena.calkowita) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cena całkowita jest wymagana'
+      });
+    }
+
+    if (!propertyData.rodzajOferty || !propertyData.rodzajOferty.typ || !propertyData.rodzajOferty.rynek) {
+      return res.status(400).json({
+        success: false,
+        error: 'Rodzaj oferty (typ i rynek) jest wymagany'
+      });
+    }
+
+    if (!propertyData.lokalizacja || !propertyData.lokalizacja.miasto || !propertyData.lokalizacja.wojewodztwo) {
+      return res.status(400).json({
+        success: false,
+        error: 'Lokalizacja (miasto i województwo) jest wymagana'
+      });
+    }
+
+    if (!propertyData.powierzchnia || !propertyData.powierzchnia.calkowita) {
+      return res.status(400).json({
+        success: false,
+        error: 'Powierzchnia całkowita jest wymagana'
+      });
+    }
+
+    if (!propertyData.pomieszczenia || !propertyData.pomieszczenia.pokoje || !propertyData.pomieszczenia.lazienki) {
+      return res.status(400).json({
+        success: false,
+        error: 'Liczba pokoi i łazienek jest wymagana'
       });
     }
 
@@ -500,23 +540,53 @@ router.post('/', auth, upload.array('files', 20), async (req, res) => {
       path: `uploads/${file.filename}`,
       mimetype: file.mimetype,
       size: file.size,
-      isCover: index === 0 // pierwszy plik jako cover
+      isCover: index === 0
     })) : [];
 
-    // Utworzenie nowej nieruchomości z przypisanym użytkownikiem
+    // Ustaw datę ważności (domyślnie 30 dni)
+    if (!propertyData.daty || !propertyData.daty.dataWaznosci) {
+      const dataWaznosci = new Date();
+      dataWaznosci.setDate(dataWaznosci.getDate() + 30);
+      propertyData.daty = {
+        ...propertyData.daty,
+        dataWaznosci
+      };
+    }
+
+    // Konwersja stringów na liczby dla wymaganych pól
+    if (typeof propertyData.cena.calkowita === 'string') {
+      propertyData.cena.calkowita = parseFloat(propertyData.cena.calkowita);
+    }
+    if (typeof propertyData.powierzchnia.calkowita === 'string') {
+      propertyData.powierzchnia.calkowita = parseFloat(propertyData.powierzchnia.calkowita);
+    }
+    if (typeof propertyData.pomieszczenia.pokoje === 'string') {
+      propertyData.pomieszczenia.pokoje = parseInt(propertyData.pomieszczenia.pokoje);
+    }
+    if (typeof propertyData.pomieszczenia.lazienki === 'string') {
+      propertyData.pomieszczenia.lazienki = parseInt(propertyData.pomieszczenia.lazienki);
+    }
+
+    // Utworzenie nowej nieruchomości
     const newProperty = new Property({
-      ...parsedOpis,
-      files: filesData,
-      lokalizacja: parsedLokalizacja,
-      szczegoly: parsedSzczegoly,
-      user: req.user._id // Przypisanie do zalogowanego użytkownika
+      ...propertyData,
+      multimedia: {
+        ...propertyData.multimedia,
+        zdjecia: filesData
+      },
+      user: req.user._id,
+      kontakt: {
+        ...propertyData.kontakt,
+        imie: req.user.name,
+        nazwisko: req.user.surname,
+        email: req.user.email,
+        telefon: req.user.phone
+      }
     });
 
     const savedProperty = await newProperty.save();
-    
-    // Populate user data before sending response
     await savedProperty.populate('user', 'name surname email phone profilePicture');
-    
+
     res.status(201).json({
       success: true,
       property: savedProperty,
@@ -525,7 +595,7 @@ router.post('/', auth, upload.array('files', 20), async (req, res) => {
   } catch (error) {
     console.error('Błąd podczas zapisywania nieruchomości:', error);
     
-    // Usuń przesłane pliki jeśli zapis się nie powiódł
+    // Usuń przesłane pliki w przypadku błędu
     if (req.files) {
       req.files.forEach(file => {
         const filePath = `uploads/${file.filename}`;
@@ -626,14 +696,14 @@ router.delete('/:id', auth, async (req, res) => {
     // Sprawdź czy użytkownik jest właścicielem lub adminem
     if (!req.user._id.equals(property.user) && req.user.role !== 'admin') {
       return res.status(403).json({ 
-        success: false,
+        success: 'nieaktywne',
         error: 'Brak uprawnień do usunięcia tej nieruchomości' 
       });
     }
 
     const deletedProperty = await Property.findByIdAndUpdate(
       req.params.id,
-      { isActive: false, updatedAt: new Date() },
+      { status: 'nieaktywne', updatedAt: new Date() },
       { new: true }
     );
 
@@ -663,7 +733,7 @@ router.get('/user/:userId', optionalAuth, async (req, res) => {
     // Dla innych użytkowników tylko aktywne
     const filters = { user: req.params.userId };
     if (!req.user || !req.user._id.equals(req.params.userId)) {
-      filters.isActive = true;
+      filters.status = 'aktywne';
     }
 
     const properties = await Property.find(filters)
@@ -758,7 +828,7 @@ router.patch('/:id/cover', auth, async (req, res) => {
 router.get('/admin/stats', adminAuth, async (req, res) => {
   try {
     const totalProperties = await Property.countDocuments();
-    const activeProperties = await Property.countDocuments({ isActive: true });
+    const activeProperties = await Property.countDocuments({ status: 'aktywne' });
     const propertiesByCategory = await Property.aggregate([
       {
         $group: {

@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
+
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
@@ -35,7 +36,7 @@ mongoose.connection.on('error', (err) => {
   console.error('Błąd połączenia z MongoDB:', err);
 });
 
-// Routes
+app.use('/api/reels', require('./routes/reel'));
 app.use('/api/inquiry', require('./routes/inquiry'));
 app.use('/api/properties', require('./routes/properties'));
 app.use('/api/emails', require('./routes/emails'));
